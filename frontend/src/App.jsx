@@ -33,6 +33,12 @@ function App() {
             <Route path="/sales" element={<Sales />} />
           </Routes>
         </div>
+
+        <footer>
+          <div className="bg-blue-600 text-white text-center py-4 mt-8">
+            &copy; {new Date().getFullYear()} NIPI 9M Fashion. All rights reserved.
+          </div>
+        </footer>
       </div>
     </Router>
   );

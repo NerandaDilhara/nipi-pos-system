@@ -20,5 +20,5 @@ app.use('/api/suppliers', require('./routes/suppliers'));
 app.use('/api/discounts', require('./routes/discounts'));
 app.use('/api/sales', require('./routes/sales'));
 
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 5020;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
