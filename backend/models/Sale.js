@@ -12,10 +12,10 @@ const saleSchema = new mongoose.Schema({
   }],
   subtotal: { type: Number, required: true },
   discount: {
-    name: String,
-    type: String,
-    value: Number,
-    amount: Number
+    name: { type: String, required: false },
+    type: { type: String, required: false },
+    value: { type: Number, required: false },
+    amount: { type: Number, required: false }
   },
   total: { type: Number, required: true },
   paymentMethod: { type: String, enum: ['cash', 'card', 'mobile'], required: true },

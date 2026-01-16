@@ -167,17 +167,21 @@ function POS() {
           total: item.total
         })),
         subtotal: calculateSubtotal(),
-        discount: selectedDiscount ? {
-          name: selectedDiscount.name,
-          type: selectedDiscount.type,
-          value: selectedDiscount.value,
-          amount: calculateDiscount()
-        } : null,
         total: total,
         paymentMethod,
         amountPaid: paymentMethod === 'cash' ? paid : total,
         change: paymentMethod === 'cash' ? calculateChange() : 0
       };
+
+      // Only add discount if one is selected
+      if (selectedDiscount) {
+        saleData.discount = {
+          name: selectedDiscount.name,
+          type: selectedDiscount.type,
+          value: selectedDiscount.value,
+          amount: calculateDiscount()
+        };
+      }
 
       console.log('Sending sale data:', saleData);
       const res = await saleAPI.create(saleData);
@@ -399,7 +403,8 @@ function POS() {
           <div class="footer">
             <p><strong>Thank you for shopping with us!</strong></p>
             <p>Visit us again soon!</p>
-            <p style="margin-top: 10px;">Powered by NIPI POS System</p>
+            <p>NIPI 9M Fashion</p>
+            <p style="margin-top: 12px;">Powered by NDK ©</p>
           </div>
 
           <script>
@@ -439,7 +444,7 @@ function POS() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Left Side - Products */}
         <div className="lg:col-span-2">
-          <div className="bg-white rounded-lg shadow-lg p-6">
+          <div className="bg-gray-200 rounded-lg shadow-lg p-6">
             <div className="flex justify-between items-center mb-4">
               <h2 className="text-3xl font-bold text-blue-600">🛒 Scan Product</h2>
               {cart.length > 0 && (
@@ -542,7 +547,7 @@ function POS() {
 
         {/* Right Side - Payment */}
         <div>
-          <div className="bg-white rounded-lg shadow-lg p-6 sticky top-4">
+          <div className="bg-gray-300 rounded-lg shadow-lg p-6 sticky top-4">
             <h2 className="text-3xl font-bold mb-6 text-green-600">💳 Payment</h2>
             
             {/* Discount Selection */}
@@ -665,8 +670,8 @@ function POS() {
               disabled={isProcessing || cart.length === 0}
               className={`w-full py-4 rounded-lg font-bold text-xl shadow-lg transition ${
                 isProcessing || cart.length === 0
-                  ? 'bg-gray-400 cursor-not-allowed'
-                  : 'bg-green-600 hover:bg-green-700 text-white'
+                  ? 'bg-blue-300 cursor-not-allowed'
+                  : 'bg-green-600 hover:bg-green-600 text-white'
               }`}
             >
               {isProcessing ? '⏳ Processing...' : '✓ Complete Sale & Print'}
