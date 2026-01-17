@@ -4,6 +4,10 @@ import { productAPI, discountAPI, saleAPI } from '../services/api';
 function POS() {
   const [barcode, setBarcode] = useState('');
   const [cart, setCart] = useState([]);
+  const [products, setProducts] = useState([]);
+  const [filteredProducts, setFilteredProducts] = useState([]);
+  const [showDropdown, setShowDropdown] = useState(false);
+  const [recentProducts, setRecentProducts] = useState([]);
   const [discounts, setDiscounts] = useState([]);
   const [selectedDiscount, setSelectedDiscount] = useState(null);
   const [paymentMethod, setPaymentMethod] = useState('cash');
@@ -12,10 +16,49 @@ function POS() {
   const [successMessage, setSuccessMessage] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const barcodeInputRef = useRef(null);
+  const dropdownRef = useRef(null);
 
   useEffect(() => {
     loadDiscounts();
+    loadProducts();
+    loadRecentProducts();
   }, []);
+
+  useEffect(() => {
+    // Handle click outside dropdown
+    const handleClickOutside = (event) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
+        setShowDropdown(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  useEffect(() => {
+    // Filter products based on barcode input
+    if (barcode.trim()) {
+      const filtered = products.filter(p => 
+        p.name.toLowerCase().includes(barcode.toLowerCase()) ||
+        p.barcode.includes(barcode)
+      ).slice(0, 10);
+      setFilteredProducts(filtered);
+      setShowDropdown(filtered.length > 0);
+    } else {
+      setFilteredProducts([]);
+      setShowDropdown(false);
+    }
+  }, [barcode, products]);
+
+  const loadProducts = async () => {
+    try {
+      const res = await productAPI.getAll();
+      setProducts(res.data);
+    } catch (err) {
+      console.error('Error loading products:', err);
+    }
+  };
 
   const loadDiscounts = async () => {
     try {
@@ -24,6 +67,22 @@ function POS() {
     } catch (err) {
       console.error('Error loading discounts:', err);
     }
+  };
+
+  const loadRecentProducts = () => {
+    const recent = localStorage.getItem('recentProducts');
+    if (recent) {
+      setRecentProducts(JSON.parse(recent));
+    }
+  };
+
+  const saveRecentProduct = (product) => {
+    let recent = [...recentProducts];
+    recent = recent.filter(p => p._id !== product._id);
+    recent.unshift(product);
+    recent = recent.slice(0, 10);
+    setRecentProducts(recent);
+    localStorage.setItem('recentProducts', JSON.stringify(recent));
   };
 
   const showError = (message) => {
@@ -36,6 +95,31 @@ function POS() {
     setTimeout(() => setSuccessMessage(''), 3000);
   };
 
+  const addProductToCart = async (product) => {
+    if (product.stock <= 0) {
+      showError(`${product.name} is out of stock!`);
+      return;
+    }
+
+    const existingItem = cart.find(item => item._id === product._id);
+    if (existingItem) {
+      if (existingItem.quantity + 1 > product.stock) {
+        showError(`Only ${product.stock} items available in stock!`);
+        return;
+      }
+      setCart(cart.map(item =>
+        item._id === product._id
+          ? { ...item, quantity: item.quantity + 1, total: (item.quantity + 1) * item.price }
+          : item
+      ));
+    } else {
+      setCart([...cart, { ...product, quantity: 1, total: product.price }]);
+    }
+    
+    saveRecentProduct(product);
+    showSuccess(`${product.name} added to cart!`);
+  };
+
   const handleBarcodeSubmit = async (e) => {
     e.preventDefault();
     if (!barcode.trim()) return;
@@ -43,40 +127,22 @@ function POS() {
     try {
       const res = await productAPI.getByBarcode(barcode);
       const product = res.data;
-
-      // Check stock
-      if (product.stock <= 0) {
-        showError(`${product.name} is out of stock!`);
-        setBarcode('');
-        return;
-      }
-
-      const existingItem = cart.find(item => item._id === product._id);
-      if (existingItem) {
-        // Check if adding more exceeds stock
-        if (existingItem.quantity + 1 > product.stock) {
-          showError(`Only ${product.stock} items available in stock!`);
-          setBarcode('');
-          return;
-        }
-        setCart(cart.map(item =>
-          item._id === product._id
-            ? { ...item, quantity: item.quantity + 1, total: (item.quantity + 1) * item.price }
-            : item
-        ));
-      } else {
-        setCart([...cart, { ...product, quantity: 1, total: product.price }]);
-      }
-      showSuccess(`${product.name} added to cart!`);
+      await addProductToCart(product);
       setBarcode('');
-      
-      // Keep focus on barcode input
+      setShowDropdown(false);
       setTimeout(() => barcodeInputRef.current?.focus(), 100);
     } catch (err) {
       console.error('Error finding product:', err);
       showError('Product not found! Please check the barcode.');
       setBarcode('');
     }
+  };
+
+  const handleProductSelect = async (product) => {
+    await addProductToCart(product);
+    setBarcode('');
+    setShowDropdown(false);
+    setTimeout(() => barcodeInputRef.current?.focus(), 100);
   };
 
   const updateQuantity = (id, newQty) => {
@@ -173,7 +239,6 @@ function POS() {
         change: paymentMethod === 'cash' ? calculateChange() : 0
       };
 
-      // Only add discount if one is selected
       if (selectedDiscount) {
         saleData.discount = {
           name: selectedDiscount.name,
@@ -187,17 +252,14 @@ function POS() {
       const res = await saleAPI.create(saleData);
       console.log('Sale response:', res.data);
       
-      // Print receipt
       printReceipt(res.data);
       
-      // Reset
       setCart([]);
       setSelectedDiscount(null);
       setAmountPaid('');
       setPaymentMethod('cash');
       showSuccess('Sale completed successfully!');
       
-      // Focus back to barcode input
       setTimeout(() => barcodeInputRef.current?.focus(), 1000);
     } catch (err) {
       console.error('Error processing sale:', err);
@@ -410,7 +472,6 @@ function POS() {
           <script>
             window.onload = function() {
               window.print();
-              // Auto close after printing (optional)
               setTimeout(function() {
                 window.close();
               }, 1000);
@@ -425,257 +486,315 @@ function POS() {
   const quickAmounts = [100, 500, 1000, 2000, 5000];
 
   return (
-    <div className="max-w-7xl mx-auto">
-      {/* Alert Messages */}
-      {errorMessage && (
-        <div className="mb-4 bg-red-100 border-l-4 border-red-500 text-red-700 p-4 rounded">
-          <p className="font-bold">⚠️ Error</p>
-          <p>{errorMessage}</p>
-        </div>
-      )}
-      
-      {successMessage && (
-        <div className="mb-4 bg-green-100 border-l-4 border-green-500 text-green-700 p-4 rounded">
-          <p className="font-bold">✓ Success</p>
-          <p>{successMessage}</p>
-        </div>
-      )}
+    <div className="min-h-screen bg-gray-100 p-2 sm:p-4 md:p-6">
+      <div className="max-w-7xl mx-auto">
+        {/* Alert Messages */}
+        {errorMessage && (
+          <div className="mb-4 bg-red-100 border-l-4 border-red-500 text-red-700 p-3 sm:p-4 rounded shadow-lg">
+            <p className="font-bold text-sm sm:text-base">⚠️ Error</p>
+            <p className="text-sm sm:text-base">{errorMessage}</p>
+          </div>
+        )}
+        
+        {successMessage && (
+          <div className="mb-4 bg-green-100 border-l-4 border-green-500 text-green-700 p-3 sm:p-4 rounded shadow-lg">
+            <p className="font-bold text-sm sm:text-base">✓ Success</p>
+            <p className="text-sm sm:text-base">{successMessage}</p>
+          </div>
+        )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left Side - Products */}
-        <div className="lg:col-span-2">
-          <div className="bg-gray-200 rounded-lg shadow-lg p-6">
-            <div className="flex justify-between items-center mb-4">
-              <h2 className="text-3xl font-bold text-blue-600">🛒 Scan Product</h2>
-              {cart.length > 0 && (
-                <button
-                  onClick={clearCart}
-                  className="bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600 text-sm"
-                >
-                  Clear Cart
-                </button>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 md:gap-6">
+          {/* Left Side - Products */}
+          <div className="lg:col-span-2 order-1">
+            <div className="bg-white rounded-lg shadow-lg p-4 sm:p-6">
+              <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center mb-4 gap-3">
+                <h2 className="text-xl sm:text-2xl md:text-3xl font-bold text-blue-600">🛒 Scan Product</h2>
+                {cart.length > 0 && (
+                  <button
+                    onClick={clearCart}
+                    className="bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600 text-sm font-medium"
+                  >
+                    Clear Cart
+                  </button>
+                )}
+              </div>
+
+              {/* Barcode Input with Dropdown */}
+              <form onSubmit={handleBarcodeSubmit} className="mb-6">
+                <div className="flex flex-col sm:flex-row gap-3" ref={dropdownRef}>
+                  <div className="flex-1 relative">
+                    <input
+                      ref={barcodeInputRef}
+                      type="text"
+                      value={barcode}
+                      onChange={(e) => setBarcode(e.target.value)}
+                      onFocus={() => barcode && setShowDropdown(true)}
+                      placeholder="🔍 Scan or search product..."
+                      className="w-full border-2 border-blue-300 rounded-lg px-4 sm:px-6 py-3 sm:py-4 text-base sm:text-lg focus:outline-none focus:ring-4 focus:ring-blue-500 focus:border-blue-500"
+                      autoFocus
+                    />
+                    
+                    {/* Dropdown Menu */}
+                    {showDropdown && filteredProducts.length > 0 && (
+                      <div className="absolute z-50 w-full mt-1 bg-white border-2 border-blue-300 rounded-lg shadow-xl max-h-80 overflow-y-auto">
+                        {filteredProducts.map(product => (
+                          <div
+                            key={product._id}
+                            onClick={() => handleProductSelect(product)}
+                            className="px-4 py-3 hover:bg-blue-50 cursor-pointer border-b last:border-b-0 transition"
+                          >
+                            <div className="flex justify-between items-start">
+                              <div className="flex-1">
+                                <p className="font-bold text-gray-800 text-sm sm:text-base">{product.name}</p>
+                                <p className="text-xs sm:text-sm text-gray-500">Barcode: {product.barcode}</p>
+                                <p className="text-xs sm:text-sm text-gray-500">Stock: {product.stock}</p>
+                              </div>
+                              <p className="font-bold text-blue-600 text-sm sm:text-base ml-2">Rs. {product.price.toFixed(2)}</p>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  
+                  <button
+                    type="submit"
+                    className="bg-blue-600 text-white px-6 sm:px-8 py-3 sm:py-4 rounded-lg hover:bg-blue-700 font-bold text-base sm:text-lg shadow-lg whitespace-nowrap"
+                  >
+                    ➕ Add
+                  </button>
+                </div>
+              </form>
+
+              {/* Recent Products */}
+              {recentProducts.length > 0 && cart.length === 0 && (
+                <div className="mb-6">
+                  <h3 className="font-bold text-sm sm:text-base mb-3 text-gray-700">📋 Recently Added Products</h3>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {recentProducts.slice(0, 6).map(product => (
+                      <button
+                        key={product._id}
+                        onClick={() => handleProductSelect(product)}
+                        className="flex justify-between items-center p-3 bg-blue-50 hover:bg-blue-100 rounded-lg border border-blue-200 transition text-left"
+                      >
+                        <div className="flex-1 min-w-0">
+                          <p className="font-semibold text-xs sm:text-sm text-gray-800 truncate">{product.name}</p>
+                          <p className="text-xs text-gray-500">Stock: {product.stock}</p>
+                        </div>
+                        <p className="font-bold text-blue-600 text-xs sm:text-sm ml-2">Rs. {product.price.toFixed(2)}</p>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Cart Items */}
+              {cart.length === 0 ? (
+                <div className="text-center py-12 sm:py-16 text-gray-400">
+                  <p className="text-4xl sm:text-6xl mb-4">🛍️</p>
+                  <p className="text-lg sm:text-xl">Cart is empty</p>
+                  <p className="text-xs sm:text-sm">Scan or select a product to get started</p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto -mx-4 sm:mx-0">
+                  <div className="inline-block min-w-full align-middle">
+                    <table className="min-w-full text-sm sm:text-base">
+                      <thead className="bg-blue-50">
+                        <tr>
+                          <th className="px-2 sm:px-4 py-2 sm:py-3 text-left font-bold">Product</th>
+                          <th className="px-2 sm:px-4 py-2 sm:py-3 text-right font-bold hidden sm:table-cell">Price</th>
+                          <th className="px-2 sm:px-4 py-2 sm:py-3 text-center font-bold">Qty</th>
+                          <th className="px-2 sm:px-4 py-2 sm:py-3 text-right font-bold">Total</th>
+                          <th className="px-2 sm:px-4 py-2 sm:py-3"></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {cart.map(item => (
+                          <tr key={item._id} className="border-b hover:bg-gray-50">
+                            <td className="px-2 sm:px-4 py-3 sm:py-4">
+                              <p className="font-medium text-xs sm:text-base">{item.name}</p>
+                              <p className="text-xs text-gray-500 sm:hidden">Rs. {item.price.toFixed(2)}</p>
+                            </td>
+                            <td className="px-2 sm:px-4 py-3 sm:py-4 text-right hidden sm:table-cell">
+                              Rs. {item.price.toFixed(2)}
+                            </td>
+                            <td className="px-2 sm:px-4 py-3 sm:py-4">
+                              <div className="flex items-center justify-center gap-1 sm:gap-2">
+                                <button
+                                  onClick={() => updateQuantity(item._id, item.quantity - 1)}
+                                  className="bg-gray-300 hover:bg-gray-400 w-7 h-7 sm:w-8 sm:h-8 rounded font-bold text-sm sm:text-base"
+                                >
+                                  -
+                                </button>
+                                <input
+                                  type="number"
+                                  value={item.quantity}
+                                  onChange={(e) => updateQuantity(item._id, parseInt(e.target.value) || 1)}
+                                  className="w-12 sm:w-16 border-2 rounded px-1 sm:px-2 py-1 text-center font-bold text-sm sm:text-base"
+                                  min="1"
+                                />
+                                <button
+                                  onClick={() => updateQuantity(item._id, item.quantity + 1)}
+                                  className="bg-gray-300 hover:bg-gray-400 w-7 h-7 sm:w-8 sm:h-8 rounded font-bold text-sm sm:text-base"
+                                >
+                                  +
+                                </button>
+                              </div>
+                            </td>
+                            <td className="px-2 sm:px-4 py-3 sm:py-4 text-right font-bold text-blue-600 text-xs sm:text-base">
+                              Rs. {item.total.toFixed(2)}
+                            </td>
+                            <td className="px-2 sm:px-4 py-3 sm:py-4">
+                              <button
+                                onClick={() => removeItem(item._id)}
+                                className="text-red-600 hover:text-red-800 font-bold text-lg sm:text-xl"
+                                title="Remove item"
+                              >
+                                🗑️
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
               )}
             </div>
-
-            <form onSubmit={handleBarcodeSubmit} className="mb-6">
-              <div className="flex gap-3">
-                <input
-                  ref={barcodeInputRef}
-                  type="text"
-                  value={barcode}
-                  onChange={(e) => setBarcode(e.target.value)}
-                  placeholder="🔍 Scan or enter barcode here..."
-                  className="flex-1 border-2 border-blue-300 rounded-lg px-6 py-4 text-lg focus:outline-none focus:ring-4 focus:ring-blue-500 focus:border-blue-500"
-                  autoFocus
-                />
-                <button
-                  type="submit"
-                  className="bg-blue-600 text-white px-8 py-4 rounded-lg hover:bg-blue-700 font-bold text-lg shadow-lg"
-                >
-                  ➕ Add
-                </button>
-              </div>
-            </form>
-
-            {/* Cart Items */}
-            {cart.length === 0 ? (
-              <div className="text-center py-16 text-gray-400">
-                <p className="text-6xl mb-4">🛍️</p>
-                <p className="text-xl">Cart is empty</p>
-                <p className="text-sm">Scan a product to get started</p>
-              </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-lg">
-                  <thead className="bg-blue-50">
-                    <tr>
-                      <th className="px-4 py-3 text-left font-bold">Product</th>
-                      <th className="px-4 py-3 text-right font-bold">Price</th>
-                      <th className="px-4 py-3 text-center font-bold">Quantity</th>
-                      <th className="px-4 py-3 text-right font-bold">Total</th>
-                      <th className="px-4 py-3"></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {cart.map(item => (
-                      <tr key={item._id} className="border-b hover:bg-gray-50">
-                        <td className="px-4 py-4 font-medium">{item.name}</td>
-                        <td className="px-4 py-4 text-right">Rs. {item.price.toFixed(2)}</td>
-                        <td className="px-4 py-4">
-                          <div className="flex items-center justify-center gap-2">
-                            <button
-                              onClick={() => updateQuantity(item._id, item.quantity - 1)}
-                              className="bg-gray-300 hover:bg-gray-400 w-8 h-8 rounded font-bold"
-                            >
-                              -
-                            </button>
-                            <input
-                              type="number"
-                              value={item.quantity}
-                              onChange={(e) => updateQuantity(item._id, parseInt(e.target.value) || 1)}
-                              className="w-16 border-2 rounded px-2 py-1 text-center font-bold"
-                              min="1"
-                            />
-                            <button
-                              onClick={() => updateQuantity(item._id, item.quantity + 1)}
-                              className="bg-gray-300 hover:bg-gray-400 w-8 h-8 rounded font-bold"
-                            >
-                              +
-                            </button>
-                          </div>
-                        </td>
-                        <td className="px-4 py-4 text-right font-bold text-blue-600">
-                          Rs. {item.total.toFixed(2)}
-                        </td>
-                        <td className="px-4 py-4">
-                          <button
-                            onClick={() => removeItem(item._id)}
-                            className="text-red-600 hover:text-red-800 font-bold text-xl"
-                            title="Remove item"
-                          >
-                            🗑️
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
           </div>
-        </div>
 
-        {/* Right Side - Payment */}
-        <div>
-          <div className="bg-gray-300 rounded-lg shadow-lg p-6 sticky top-4">
-            <h2 className="text-3xl font-bold mb-6 text-green-600">💳 Payment</h2>
-            
-            {/* Discount Selection */}
-            <div className="mb-6">
-              <label className="block text-lg font-bold mb-2">🏷️ Apply Discount</label>
-              <select
-                value={selectedDiscount?._id || ''}
-                onChange={(e) => {
-                  const discount = discounts.find(d => d._id === e.target.value);
-                  setSelectedDiscount(discount || null);
-                }}
-                className="w-full border-2 border-gray-300 rounded-lg px-4 py-3 text-lg focus:outline-none focus:ring-2 focus:ring-green-500"
-              >
-                <option value="">No Discount</option>
-                {discounts.map(discount => (
-                  <option key={discount._id} value={discount._id}>
-                    {discount.name} - {discount.type === 'percentage' ? `${discount.value}%` : `Rs. ${discount.value}`} OFF
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            {/* Payment Method */}
-            <div className="mb-6">
-              <label className="block text-lg font-bold mb-2">💰 Payment Method</label>
-              <div className="grid grid-cols-3 gap-2">
-                <button
-                  onClick={() => setPaymentMethod('cash')}
-                  className={`py-3 rounded-lg font-bold text-lg transition ${
-                    paymentMethod === 'cash' 
-                      ? 'bg-green-600 text-white shadow-lg scale-105' 
-                      : 'bg-gray-200 hover:bg-gray-300'
-                  }`}
+          {/* Right Side - Payment */}
+          <div className="order-2 lg:order-2">
+            <div className="bg-white rounded-lg shadow-lg p-4 sm:p-6 lg:sticky lg:top-4">
+              <h2 className="text-xl sm:text-2xl md:text-3xl font-bold mb-4 sm:mb-6 text-green-600">💳 Payment</h2>
+              
+              {/* Discount Selection */}
+              <div className="mb-4 sm:mb-6">
+                <label className="block text-sm sm:text-base md:text-lg font-bold mb-2">🏷️ Apply Discount</label>
+                <select
+                  value={selectedDiscount?._id || ''}
+                  onChange={(e) => {
+                    const discount = discounts.find(d => d._id === e.target.value);
+                    setSelectedDiscount(discount || null);
+                  }}
+                  className="w-full border-2 border-gray-300 rounded-lg px-3 sm:px-4 py-2 sm:py-3 text-sm sm:text-base md:text-lg focus:outline-none focus:ring-2 focus:ring-green-500"
                 >
-                  💵 Cash
-                </button>
-                <button
-                  onClick={() => setPaymentMethod('card')}
-                  className={`py-3 rounded-lg font-bold text-lg transition ${
-                    paymentMethod === 'card' 
-                      ? 'bg-green-600 text-white shadow-lg scale-105' 
-                      : 'bg-gray-200 hover:bg-gray-300'
-                  }`}
-                >
-                  💳 Card
-                </button>
-                <button
-                  onClick={() => setPaymentMethod('mobile')}
-                  className={`py-3 rounded-lg font-bold text-lg transition ${
-                    paymentMethod === 'mobile' 
-                      ? 'bg-green-600 text-white shadow-lg scale-105' 
-                      : 'bg-gray-200 hover:bg-gray-300'
-                  }`}
-                >
-                  📱 Mobile
-                </button>
-              </div>
-            </div>
-
-            {/* Cash Payment Input */}
-            {paymentMethod === 'cash' && (
-              <div className="mb-6">
-                <label className="block text-lg font-bold mb-2">💵 Amount Received</label>
-                <input
-                  type="number"
-                  value={amountPaid}
-                  onChange={(e) => setAmountPaid(e.target.value)}
-                  placeholder="0.00"
-                  className="w-full border-2 border-gray-300 rounded-lg px-4 py-3 text-xl font-bold focus:outline-none focus:ring-2 focus:ring-green-500"
-                  step="0.01"
-                />
-                
-                {/* Quick Amount Buttons */}
-                <div className="grid grid-cols-5 gap-2 mt-3">
-                  {quickAmounts.map(amount => (
-                    <button
-                      key={amount}
-                      type="button"
-                      onClick={() => setAmountPaid(amount.toString())}
-                      className="bg-blue-100 hover:bg-blue-200 py-2 rounded text-sm font-bold"
-                    >
-                      {amount}
-                    </button>
+                  <option value="">No Discount</option>
+                  {discounts.map(discount => (
+                    <option key={discount._id} value={discount._id}>
+                      {discount.name} - {discount.type === 'percentage' ? `${discount.value}%` : `Rs. ${discount.value}`} OFF
+                    </option>
                   ))}
+                </select>
+              </div>
+
+              {/* Payment Method */}
+              <div className="mb-4 sm:mb-6">
+                <label className="block text-sm sm:text-base md:text-lg font-bold mb-2">💰 Payment Method</label>
+                <div className="grid grid-cols-3 gap-2">
+                  <button
+                    onClick={() => setPaymentMethod('cash')}
+                    className={`py-2 sm:py-3 rounded-lg font-bold text-xs sm:text-sm md:text-base transition ${
+                      paymentMethod === 'cash' 
+                        ? 'bg-green-600 text-white shadow-lg scale-105' 
+                        : 'bg-gray-200 hover:bg-gray-300'
+                    }`}
+                  >
+                    💵 Cash
+                  </button>
+                  <button
+                    onClick={() => setPaymentMethod('card')}
+                    className={`py-2 sm:py-3 rounded-lg font-bold text-xs sm:text-sm md:text-base transition ${
+                      paymentMethod === 'card' 
+                        ? 'bg-green-600 text-white shadow-lg scale-105' 
+                        : 'bg-gray-200 hover:bg-gray-300'
+                    }`}
+                  >
+                    💳 Card
+                  </button>
+                  <button
+                    onClick={() => setPaymentMethod('mobile')}
+                    className={`py-2 sm:py-3 rounded-lg font-bold text-xs sm:text-sm md:text-base transition ${
+                      paymentMethod === 'mobile' 
+                        ? 'bg-green-600 text-white shadow-lg scale-105' 
+                        : 'bg-gray-200 hover:bg-gray-300'
+                    }`}
+                  >
+                    📱 Mobile
+                  </button>
                 </div>
               </div>
-            )}
 
-            {/* Summary */}
-            <div className="space-y-3 mb-6 bg-gray-50 p-4 rounded-lg">
-              <div className="flex justify-between text-lg">
-                <span>Subtotal:</span>
-                <span className="font-bold">Rs. {calculateSubtotal().toFixed(2)}</span>
-              </div>
-              <div className="flex justify-between text-lg text-green-600">
-                <span>Discount:</span>
-                <span className="font-bold">- Rs. {calculateDiscount().toFixed(2)}</span>
-              </div>
-              <div className="border-t-2 border-gray-300 pt-3 flex justify-between font-bold text-2xl text-blue-600">
-                <span>TOTAL:</span>
-                <span>Rs. {calculateTotal().toFixed(2)}</span>
-              </div>
-              {paymentMethod === 'cash' && amountPaid && (
-                <>
-                  <div className="flex justify-between text-lg">
-                    <span>Paid:</span>
-                    <span className="font-bold">Rs. {parseFloat(amountPaid).toFixed(2)}</span>
+              {/* Cash Payment Input */}
+              {paymentMethod === 'cash' && (
+                <div className="mb-4 sm:mb-6">
+                  <label className="block text-sm sm:text-base md:text-lg font-bold mb-2">💵 Amount Received</label>
+                  <input
+                    type="number"
+                    value={amountPaid}
+                    onChange={(e) => setAmountPaid(e.target.value)}
+                    placeholder="0.00"
+                    className="w-full border-2 border-gray-300 rounded-lg px-3 sm:px-4 py-2 sm:py-3 text-lg sm:text-xl font-bold focus:outline-none focus:ring-2 focus:ring-green-500"
+                    step="0.01"
+                  />
+                  
+                  {/* Quick Amount Buttons */}
+                  <div className="grid grid-cols-5 gap-1 sm:gap-2 mt-3">
+                    {quickAmounts.map(amount => (
+                      <button
+                        key={amount}
+                        type="button"
+                        onClick={() => setAmountPaid(amount.toString())}
+                        className="bg-blue-100 hover:bg-blue-200 py-2 rounded text-xs sm:text-sm font-bold"
+                      >
+                        {amount}
+                      </button>
+                    ))}
                   </div>
-                  <div className="flex justify-between text-xl font-bold text-green-600">
-                    <span>Change:</span>
-                    <span>Rs. {calculateChange().toFixed(2)}</span>
-                  </div>
-                </>
+                </div>
               )}
-            </div>
 
-            {/* Complete Sale Button */}
-            <button
-              onClick={handleCheckout}
-              disabled={isProcessing || cart.length === 0}
-              className={`w-full py-4 rounded-lg font-bold text-xl shadow-lg transition ${
-                isProcessing || cart.length === 0
-                  ? 'bg-blue-300 cursor-not-allowed'
-                  : 'bg-green-600 hover:bg-green-600 text-white'
-              }`}
-            >
-              {isProcessing ? '⏳ Processing...' : '✓ Complete Sale & Print'}
-            </button>
+              {/* Summary */}
+              <div className="space-y-2 sm:space-y-3 mb-4 sm:mb-6 bg-gray-50 p-3 sm:p-4 rounded-lg">
+                <div className="flex justify-between text-sm sm:text-base md:text-lg">
+                  <span>Subtotal:</span>
+                  <span className="font-bold">Rs. {calculateSubtotal().toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between text-sm sm:text-base md:text-lg text-green-600">
+                  <span>Discount:</span>
+                  <span className="font-bold">- Rs. {calculateDiscount().toFixed(2)}</span>
+                </div>
+                <div className="border-t-2 border-gray-300 pt-2 sm:pt-3 flex justify-between font-bold text-lg sm:text-xl md:text-2xl text-blue-600">
+                  <span>TOTAL:</span>
+                  <span>Rs. {calculateTotal().toFixed(2)}</span>
+                </div>
+                {paymentMethod === 'cash' && amountPaid && (
+                  <>
+                    <div className="flex justify-between text-sm sm:text-base md:text-lg">
+                      <span>Paid:</span>
+                      <span className="font-bold">Rs. {parseFloat(amountPaid).toFixed(2)}</span>
+                    </div>
+                    <div className="flex justify-between text-base sm:text-lg md:text-xl font-bold text-green-600">
+                      <span>Change:</span>
+                      <span>Rs. {calculateChange().toFixed(2)}</span>
+                    </div>
+                  </>
+                )}
+              </div>
+
+              {/* Complete Sale Button */}
+              <button
+                onClick={handleCheckout}
+                disabled={isProcessing || cart.length === 0}
+                className={`w-full py-3 sm:py-4 rounded-lg font-bold text-base sm:text-lg md:text-xl shadow-lg transition ${
+                  isProcessing || cart.length === 0
+                    ? 'bg-gray-300 cursor-not-allowed'
+                    : 'bg-green-600 hover:bg-green-700 text-white'
+                }`}
+              >
+                {isProcessing ? '⏳ Processing...' : '✓ Complete Sale & Print'}
+              </button>
+            </div>
           </div>
         </div>
       </div>
